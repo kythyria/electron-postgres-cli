@@ -3,8 +3,10 @@ import * as ReactDOM from 'react-dom';
 import * as Repl from './repl';
 import * as pg from 'pg';
 
+let connection : pg.Client;
+
 (async() => {
-    let connection = new pg.Client({
+    connection = new pg.Client({
         host: "localhost",
         port: 5432,
         user: "kythyria",

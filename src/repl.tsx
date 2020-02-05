@@ -1,6 +1,33 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import * as pg from 'pg';
+import * as util from 'util';
+
+interface ServerMessage extends Error {
+    // BUG: On non-english servers this might be wrong
+    // see https://www.postgresql.org/docs/current/protocol-error-fields.html
+    // but node-postgres uses S (which is localised) rather than V (which isn't)
+    severity: "ERROR" | "FATAL" | "PANIC" | "WARNING" | "NOTICE" | "DEBUG" | "INFO" | "LOG";
+    code: string;
+    detail?: string;
+    hint?: string;
+    position?: string;
+    internalPosition?: string;
+    internalQuery?: string;
+    where?: string;
+    schema?: string;
+    table?: string;
+    column?: string;
+    dataType?: string;
+    constraint?: string;
+    file?: string;
+    line?: string;
+    routine?: string;
+}
+
+function isServerMessage(e: Error) : e is ServerMessage{
+    return e.name == "notice" || (e.name == "error" && 'severity' in e)
+}
 
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
 
@@ -35,12 +62,12 @@ interface ClientErrorBlock {
     error: Error;
 }
 
-var TS = (props: {val: Date}) : JSX.Element => <time dateTime={props.val.toISOString()}>{props.val.toTimeString()}</time>
+var TS = (props: {val: Date}) : JSX.Element => <time dateTime={props.val.toISOString()}>{props.val.toLocaleTimeString()}</time>
 
 class QuestionBlockView extends React.PureComponent<QuestionBlock> {
     render() {
         return <div className="text question">
-            <TS val={this.props.when}/> &gt; {this.props.value}
+            [<TS val={this.props.when}/>] &gt; {this.props.value}
         </div>
     }
 }
@@ -48,7 +75,7 @@ class QuestionBlockView extends React.PureComponent<QuestionBlock> {
 class TextReplyBlockView extends React.PureComponent<TextReplyBlock> {
     render() {
         return <div className={`text ${this.props.type}`}>
-            <TS val={this.props.when}/> {this.props.value}
+            [<TS val={this.props.when}/>] {this.props.value}
         </div>
     }
 }
@@ -92,8 +119,8 @@ class TableBlockView extends React.PureComponent<PgResultBlock> {
         }
 
         return <div className="table">
+            [<TS val={this.props.when}/>] {this.props.result.command}: {this.props.result.rowCount} row{this.props.result.rowCount != 1 ? "s" : ""} affected.
             {tab}
-            <TS val={this.props.when}/> {this.props.result.command}: {this.props.result.rowCount} rows affected.
         </div>
     }
 }
@@ -175,11 +202,9 @@ export class REPL extends React.Component<ReplViewProps, ReplViewState> {
     }
 
     componentDidMount() {
-        this.props.connection.on("notice", this.onNoticeError);
     }
 
     componentWillUnmount() {
-        this.props.connection.removeListener("notice", this.onNoticeError);
     }
 
     onSubmitInput = async (input: string) => {
@@ -198,19 +223,38 @@ export class REPL extends React.Component<ReplViewProps, ReplViewState> {
 
         }
         catch(e) {
-            this.appendBlock({
-                when: new Date(),
-                type: "clientError",
-                error: e
-            })
+            if(isServerMessage(e)) {
+                this.appendBlock({
+                    when: new Date(),
+                    type: "text",
+                    subtype: e.name == "notice" ? "notice" : "error",
+                    value: util.inspect(e)
+                });
+            }
+            else {
+                this.appendBlock({
+                    when: new Date(),
+                    type: "clientError",
+                    error: e
+                });
+            }
         }
     }
 
-    onNoticeError = async (e: any) => {
+    onNotice = async (e: any) => {
         this.appendBlock({
             when: new Date(),
             type: "text",
             subtype: "notice",
+            value: JSON.stringify(e)
+        });
+    }
+
+    onError = async (e: any) => {
+        this.appendBlock({
+            when: new Date(),
+            type: "text",
+            subtype: "error",
             value: JSON.stringify(e)
         });
     }
